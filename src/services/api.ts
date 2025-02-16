@@ -1,7 +1,34 @@
 // src/services/api.ts
 import axios from 'axios';
+import { config } from '../config/config';
 
-const API_BASE_URL = 'http://localhost:8080';
+// API endpoints
+const ENDPOINTS = {
+  HEALTH: 'health',
+  SET_SETTINGS: 'set-adventure-settings',
+  START_ADVENTURE: 'start-adventure',
+  ACTION: 'action'
+} as const;
+
+const API_BASE_URL = import.meta.env.DEV 
+  ? '/api'  // Use proxy in development
+  : import.meta.env.VITE_API_URL || 'http://localhost:8080';
+
+const axiosInstance = axios.create({
+  timeout: 300000,
+  headers: {
+    'Content-Type': 'application/json',
+  }
+});
+
+// Log configuration in development
+if (config.isDevelopment) {
+  console.log('API Configuration:', {
+    baseUrl: API_BASE_URL,
+    timeout: 300000,
+    isDevelopment: config.isDevelopment
+  });
+}
 
 export interface AdventureSettings {
   setting: string;
@@ -12,12 +39,6 @@ export interface AdventureSettings {
   additionalDetails: string;
 }
 
-export interface GameState {
-  history: string[];
-  currentScene: string;
-  isInGame: boolean;
-}
-
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -25,47 +46,57 @@ export interface ApiResponse<T> {
 }
 
 class ApiService {
-  private sessionId: string | null = null;
-
-  private getHeaders() {
-    return {
-      'Content-Type': 'application/json',
-      ...(this.sessionId && { 'X-Session-ID': this.sessionId }),
-    };
+  private getFullUrl(endpoint: string): string {
+    // Add leading slash if not present
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    return `${API_BASE_URL}${cleanEndpoint}`;
   }
 
-  private handleResponse<T>(response: any): T {
-    if (response.headers['x-session-id']) {
-      this.sessionId = response.headers['x-session-id'];
+  private async handleRequest<T>(
+    method: 'get' | 'post',
+    endpoint: string,
+    data?: any
+  ): Promise<ApiResponse<T>> {
+    const url = this.getFullUrl(endpoint);
+    try {
+      console.log(`Making ${method.toUpperCase()} request to ${url}`);
+      
+      const response = await axiosInstance({
+        method,
+        url,
+        data,
+      });
+      
+      console.log(`Received response from ${endpoint}:`, response.data);
+      return response.data;
+    } catch (error) {
+      console.error(`Error in ${method.toUpperCase()} ${url}:`, error);
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNREFUSED') {
+          throw new Error('Unable to connect to the server. Please ensure the backend is running.');
+        }
+        const message = error.response?.data?.error || error.message;
+        throw new Error(message);
+      }
+      throw error;
     }
-    return response.data;
   }
 
-  async generateAdventure(settings: AdventureSettings) {
-    const response = await axios.post(
-      `${API_BASE_URL}/generate-adventure`,
-      settings,
-      { headers: this.getHeaders() }
-    );
-    return this.handleResponse<ApiResponse<{ response: string; sessionId: string }>>(response);
+  async setAdventureSettings(settings: AdventureSettings): Promise<ApiResponse<string>> {
+    console.log('Sending settings to backend:', settings);
+    return this.handleRequest<string>('post', ENDPOINTS.SET_SETTINGS, settings);
   }
 
-  async sendAction(action: string) {
-    const response = await axios.post(
-      `${API_BASE_URL}/ask`,
-      action,
-      { headers: this.getHeaders() }
-    );
-    return this.handleResponse<ApiResponse<{ response: string; sessionId: string }>>(response);
+  async startAdventure(settings: AdventureSettings): Promise<ApiResponse<string>> {
+    return this.handleRequest<string>('post', ENDPOINTS.START_ADVENTURE, settings);
   }
 
-  async getGameState() {
-    if (!this.sessionId) return null;
-    const response = await axios.get(
-      `${API_BASE_URL}/game-state/${this.sessionId}`,
-      { headers: this.getHeaders() }
-    );
-    return this.handleResponse<ApiResponse<GameState>>(response);
+  async sendAction(action: string): Promise<ApiResponse<string>> {
+    return this.handleRequest<string>('post', ENDPOINTS.ACTION, { action });
+  }
+
+  async checkHealth(): Promise<ApiResponse<string>> {
+    return this.handleRequest<string>('get', ENDPOINTS.HEALTH);
   }
 }
 
