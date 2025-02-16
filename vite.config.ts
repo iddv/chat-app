@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // Get the actual Windows IP from your /etc/resolv.conf
-const WINDOWS_HOST = '10.255.255.254'; // Replace this with your actual Windows IP
+const WINDOWS_HOST = 'localhost'; // Replace this with your actual Windows IP
 
 export default defineConfig({
   plugins: [react()],
