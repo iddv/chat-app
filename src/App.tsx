@@ -22,6 +22,7 @@ const AdventureChatInterface = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [selectedTheme, setSelectedTheme] = useState('Fantasy');
+  const [useStreaming, setUseStreaming] = useState(false);
   const [adventureSettings, setAdventureSettings] = useState<AdventureSettings>({
     setting: 'medieval fantasy',
     genre: 'fantasy',
@@ -48,7 +49,6 @@ const AdventureChatInterface = () => {
   const configureAdventure = async () => {
     setIsLoading(true);
     try {
-      // Update settings based on selected theme
       const updatedSettings = {
         ...adventureSettings,
         genre: selectedTheme.toLowerCase(),
@@ -73,6 +73,7 @@ const AdventureChatInterface = () => {
     }
   };
 
+  // Regular synchronous start
   const startAdventure = async () => {
     if (!isConfigured) return;
     setIsLoading(true);
@@ -89,6 +90,58 @@ const AdventureChatInterface = () => {
     }
   };
 
+  // Streaming start
+  const startStreamingAdventure = async () => {
+    if (!isConfigured) return;
+    setIsLoading(true);
+    
+    let currentResponse = '';
+    
+    try {
+      await apiService.startStreamingAdventure(
+        adventureSettings,
+        // Message handler
+        (message) => {
+          currentResponse += message;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            
+            if (lastMessage && lastMessage.type === 'system') {
+              lastMessage.content = currentResponse;
+              return [...newMessages];
+            } else {
+              return [...newMessages, {
+                content: currentResponse,
+                type: 'system' as const,
+                timestamp: Date.now()
+              }];
+            }
+          });
+        },
+        // Complete handler
+        () => {
+          setGameStarted(true);
+          setIsLoading(false);
+          currentResponse = '';
+        },
+        // Error handler
+        (error) => {
+          addMessage(`Failed to start adventure: ${error.message}`, 'error');
+          setIsLoading(false);
+          currentResponse = '';
+        }
+      );
+    } catch (error) {
+      addMessage(
+        `Failed to start adventure: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'error'
+      );
+      setIsLoading(false);
+    }
+  };
+
+  // Regular synchronous action
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !gameStarted) return;
@@ -106,6 +159,61 @@ const AdventureChatInterface = () => {
     } catch (error) {
       addMessage('Failed to process your action. Please try again.', 'error');
     } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Streaming action
+  const handleStreamingAction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || !gameStarted || isLoading) return;
+
+    const userInput = input.trim();
+    setInput('');
+    addMessage(userInput, 'user');
+    setIsLoading(true);
+
+    let currentResponse = '';
+
+    try {
+      await apiService.streamAction(
+        userInput,
+        // Message handler
+        (message) => {
+          currentResponse += message;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            
+            if (lastMessage && lastMessage.type === 'system') {
+              lastMessage.content = currentResponse;
+              return [...newMessages];
+            } else {
+              return [...newMessages, {
+                content: currentResponse,
+                type: 'system' as const,
+                timestamp: Date.now()
+              }];
+            }
+          });
+        },
+        // Complete handler
+        () => {
+          setIsLoading(false);
+          currentResponse = '';
+        },
+        // Error handler
+        (error) => {
+          addMessage(`Failed to process action: ${error.message}`, 'error');
+          setIsLoading(false);
+          currentResponse = '';
+        }
+      );
+    } catch (error) {
+      addMessage(
+        `Failed to process action: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'error'
+      );
       setIsLoading(false);
     }
   };
@@ -147,6 +255,16 @@ const AdventureChatInterface = () => {
                     {theme}
                   </button>
                 ))}
+                <button
+                  onClick={() => setUseStreaming(!useStreaming)}
+                  className={`px-4 py-2 rounded transition-colors ${
+                    useStreaming 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gray-800 text-white hover:bg-gray-700'
+                  }`}
+                >
+                  {useStreaming ? 'Streaming Mode' : 'Regular Mode'}
+                </button>
               </div>
 
               {!isConfigured ? (
@@ -159,7 +277,7 @@ const AdventureChatInterface = () => {
                 </button>
               ) : (
                 <button 
-                  onClick={startAdventure} 
+                  onClick={useStreaming ? startStreamingAdventure : startAdventure}
                   disabled={isLoading}
                   className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:bg-gray-600"
                 >
@@ -185,7 +303,7 @@ const AdventureChatInterface = () => {
           </div>
 
           {gameStarted && (
-            <form onSubmit={handleAction} className="flex gap-2">
+            <form onSubmit={useStreaming ? handleStreamingAction : handleAction} className="flex gap-2">
               <input
                 type="text"
                 value={input}
