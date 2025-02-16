@@ -171,4 +171,4 @@ The backend repository contains the Kotlin server that handles:
 
 ---
 
-For more information about the backend service, visit the [backend repository](backend-repo-url).
+For more information about the backend service, visit the [backend repository](https://github.com/iddv/shiny-system).
