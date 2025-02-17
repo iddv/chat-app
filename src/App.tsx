@@ -94,6 +94,7 @@ const AdventureChatInterface = () => {
   const startStreamingAdventure = async () => {
     if (!isConfigured) return;
     setIsLoading(true);
+    setGameStarted(true);
     
     let currentResponse = '';
     
@@ -102,26 +103,23 @@ const AdventureChatInterface = () => {
         adventureSettings,
         // Message handler
         (message) => {
-          currentResponse += message;
+          currentResponse += message; // Append new message chunk
           setMessages(prev => {
             const newMessages = [...prev];
-            const lastMessage = newMessages[newMessages.length - 1];
-            
-            if (lastMessage && lastMessage.type === 'system') {
-              lastMessage.content = currentResponse;
-              return [...newMessages];
+            const lastIndex = newMessages.length - 1;
+            if (lastIndex >= 0 && newMessages[lastIndex].type === 'system') {
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: newMessages[lastIndex].content + message,
+              };
+              return newMessages;
             } else {
-              return [...newMessages, {
-                content: currentResponse,
-                type: 'system' as const,
-                timestamp: Date.now()
-              }];
+              return [...newMessages, { content: message, type: 'system', timestamp: Date.now() }];
             }
           });
         },
         // Complete handler
         () => {
-          setGameStarted(true);
           setIsLoading(false);
           currentResponse = '';
         },
@@ -180,20 +178,18 @@ const AdventureChatInterface = () => {
         userInput,
         // Message handler
         (message) => {
-          currentResponse += message;
+          currentResponse += message; // Append new message chunk
           setMessages(prev => {
             const newMessages = [...prev];
-            const lastMessage = newMessages[newMessages.length - 1];
-            
-            if (lastMessage && lastMessage.type === 'system') {
-              lastMessage.content = currentResponse;
-              return [...newMessages];
+            const lastIndex = newMessages.length - 1;
+            if (lastIndex >= 0 && newMessages[lastIndex].type === 'system') {
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: newMessages[lastIndex].content + message,
+              };
+              return newMessages;
             } else {
-              return [...newMessages, {
-                content: currentResponse,
-                type: 'system' as const,
-                timestamp: Date.now()
-              }];
+              return [...newMessages, { content: message, type: 'system', timestamp: Date.now() }];
             }
           });
         },
@@ -216,7 +212,7 @@ const AdventureChatInterface = () => {
       );
       setIsLoading(false);
     }
-  };
+  };  
 
   return (
     <div className="min-h-screen" style={backgroundStyle}>

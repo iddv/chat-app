@@ -46,7 +46,9 @@ export interface ApiResponse<T> {
 }
 
 class ApiService {
-  private getFullUrl(endpoint: string): string {
+  private activeEventSource: EventSource | null = null;
+
+  getFullUrl(endpoint: string): string {
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${API_BASE_URL}${cleanEndpoint}`;
   }
@@ -81,7 +83,14 @@ class ApiService {
     }
   }
 
-  // Existing synchronous methods
+  private cleanupEventSource() {
+    if (this.activeEventSource) {
+      this.activeEventSource.close();
+      this.activeEventSource = null;
+    }
+  }
+
+  // Regular API Methods
   async setAdventureSettings(settings: AdventureSettings): Promise<ApiResponse<string>> {
     console.log('Sending settings to backend:', settings);
     return this.handleRequest<string>('post', ENDPOINTS.SET_SETTINGS, settings);
@@ -99,66 +108,176 @@ class ApiService {
     return this.handleRequest<string>('get', ENDPOINTS.HEALTH);
   }
 
-  // New streaming methods
-  async startStreamingAdventure(
-    settings: AdventureSettings,
-    onMessage: (message: string) => void,
-    onComplete: () => void,
-    onError: (error: Error) => void
-  ): Promise<void> {
+ // Update these parts in your api.ts file
+
+ async startStreamingAdventure(
+  settings: AdventureSettings,
+  onMessage: (message: string) => void,
+  onComplete: () => void,
+  onError: (error: Error) => void
+): Promise<() => void> {
+  this.cleanupEventSource();
+  let connectionAttempts = 0;
+  const maxAttempts = 3;
+  
+  const connectEventSource = async () => {
     try {
-      // First set the adventure settings
-      await this.handleRequest('post', ENDPOINTS.SET_SETTINGS, settings);
+      const settingsResponse = await this.setAdventureSettings(settings);
       
-      // Then start the SSE connection
-      const eventSource = new EventSource(
-        this.getFullUrl(ENDPOINTS.STREAM_ADVENTURE)
-      );
-
-      eventSource.addEventListener('message', (event) => {
-        onMessage(event.data);
+      if (!settingsResponse.success) {
+        throw new Error('Failed to set adventure settings');
+      }
+      
+      const url = this.getFullUrl(ENDPOINTS.STREAM_ADVENTURE);
+      console.log('Creating EventSource with URL:', url);
+      
+      this.activeEventSource = new EventSource(url, {
+        withCredentials: false
       });
 
-      eventSource.addEventListener('done', () => {
-        eventSource.close();
-        onComplete();
+      // Set up timeout for initial connection
+      const connectionTimeout = setTimeout(() => {
+        if (this.activeEventSource?.readyState === EventSource.CONNECTING) {
+          this.activeEventSource.close();
+          retryConnection();
+        }
+      }, 5000);
+
+      const retryConnection = () => {
+        if (connectionAttempts < maxAttempts) {
+          connectionAttempts++;
+          console.log(`Retrying connection (attempt ${connectionAttempts}/${maxAttempts})...`);
+          setTimeout(connectEventSource, 1000 * connectionAttempts); // Exponential backoff
+        } else {
+          onError(new Error(`Failed to connect after ${maxAttempts} attempts`));
+        }
+      };
+
+      let isCompleted = false;
+
+      this.activeEventSource.onopen = () => {
+        console.log('SSE Connection opened');
+        clearTimeout(connectionTimeout);
+        connectionAttempts = 0;
+      };
+
+      this.activeEventSource.addEventListener('connected', (event) => {
+        console.log('SSE Connection established:', event);
       });
 
-      eventSource.onerror = (error) => {
-        eventSource.close();
-        onError(new Error('SSE connection failed'));
+      this.activeEventSource.addEventListener('message', (event) => {
+        try {
+          console.log('Received message:', event.data);
+          if (typeof event.data === 'string') {
+            onMessage(event.data);
+          }
+        } catch (error) {
+          console.error('Error processing message:', error);
+        }
+      });
+
+      this.activeEventSource.addEventListener('error', (event: Event) => {
+        console.error('Server reported error:', event);
+        this.cleanupEventSource();
+        onError(new Error('Server reported an error'));
+      });
+
+      this.activeEventSource.addEventListener('done', () => {
+        if (!isCompleted) {
+          isCompleted = true;
+          console.log('Stream completed');
+          this.cleanupEventSource();
+          onComplete();
+        }
+      });
+
+      this.activeEventSource.onerror = (event) => {
+        clearTimeout(connectionTimeout);
+        console.error('SSE Error:', event);
+        
+        if (this.activeEventSource?.readyState === EventSource.CONNECTING) {
+          retryConnection();
+        } else {
+          onError(new Error('SSE connection failed'));
+          this.cleanupEventSource();
+        }
       };
     } catch (error) {
+      console.error('Error in connectEventSource:', error);
+      this.cleanupEventSource();
       onError(error instanceof Error ? error : new Error('Unknown error occurred'));
     }
-  }
+  };
+
+  await connectEventSource();
+  return () => this.cleanupEventSource();
+}
 
   async streamAction(
     action: string,
     onMessage: (message: string) => void,
     onComplete: () => void,
     onError: (error: Error) => void
-  ): Promise<void> {
-    try {
-      const eventSource = new EventSource(
-        `${this.getFullUrl(ENDPOINTS.STREAM_ACTION)}?action=${encodeURIComponent(action)}`
-      );
+  ): Promise<() => void> {
+    this.cleanupEventSource();
 
-      eventSource.addEventListener('message', (event) => {
-        onMessage(event.data);
+    try {
+      const url = `${this.getFullUrl(ENDPOINTS.STREAM_ACTION)}?action=${encodeURIComponent(action)}`;
+      console.log('Creating EventSource for action with URL:', url);
+      
+      this.activeEventSource = new EventSource(url, {
+        withCredentials: true
       });
 
-      eventSource.addEventListener('done', () => {
-        eventSource.close();
+      // Connection opened
+      this.activeEventSource.onopen = (event) => {
+        console.log('Action stream connection opened:', event);
+      };
+
+      // Connection established
+      this.activeEventSource.addEventListener('connected', (event) => {
+        console.log('Action stream connection established:', event.data);
+      });
+
+      // Regular message
+      this.activeEventSource.onmessage = (event) => {
+        try {
+          console.log('Received action stream message:', event.data);
+          onMessage(event.data);
+        } catch (error) {
+          console.error('Error processing action message:', error);
+        }
+      };
+
+      // Stream completed
+      this.activeEventSource.addEventListener('done', (event) => {
+        console.log('Action stream completed:', event);
+        this.cleanupEventSource();
         onComplete();
       });
 
-      eventSource.onerror = (error) => {
-        eventSource.close();
-        onError(new Error('SSE connection failed'));
+      // Error handling
+      this.activeEventSource.onerror = (event) => {
+        console.error('Action stream error details:', {
+          readyState: this.activeEventSource?.readyState,
+          event: event
+        });
+        
+        if (this.activeEventSource?.readyState === EventSource.CONNECTING) {
+          onError(new Error('Unable to connect to the action stream. Please check your connection.'));
+        } else {
+          onError(new Error('Action stream connection failed'));
+        }
+        
+        this.cleanupEventSource();
       };
+
+      // Return cleanup function
+      return () => this.cleanupEventSource();
     } catch (error) {
+      this.cleanupEventSource();
       onError(error instanceof Error ? error : new Error('Unknown error occurred'));
+      return () => {};
     }
   }
 }
